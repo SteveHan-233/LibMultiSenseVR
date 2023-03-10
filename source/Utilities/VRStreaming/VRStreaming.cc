@@ -203,8 +203,11 @@ void Camera::lumaCallback(const crl::multisense::image::Header& header)
     image_buffers_[header.source] = std::make_shared<BufferWrapper<crl::multisense::image::Header>>(m_channel, header);
 }
 
+// Finds the corresponding Luma image and if it is the same frame, converts the chroma image to BGR and displays it.
 void Camera::chromaCallback(const crl::multisense::image::Header& header)
 {
+    // The left-luma image is currently published before the matching chroma image so this can just trigger on that
+
     if (crl::multisense::Source_Chroma_Left != header.source &&
         crl::multisense::Source_Chroma_Right != header.source)
     {
@@ -223,28 +226,30 @@ void Camera::chromaCallback(const crl::multisense::image::Header& header)
 
     if (header.frameId == luma_ptr->data().frameId)
     {
+        const uint32_t height = luma_ptr->data().height;
+        const uint32_t width = luma_ptr->data().width;
 
+        std::cout << "received chroma image with resolution " << width << "x" << height << std::endl;
+
+        // Create a container for the image data
+        std::vector<uint8_t> imageData;
+        imageData.resize(header.imageLength);
+
+        // Convert YCbCr 4:2:0 to RGB
+        ycbcrToBgr(luma_ptr->data(), header, &imageData[0]);
+        // Create a OpenCV matrix using our image container
+        cv::Mat_<uint8_t> imageMat(header.height, header.width, &(imageData[0]));
+
+        // Display the image using OpenCV
+        cv::namedWindow("Example");
+        cv::imshow("Example", imageMat);
+        cv::waitKey(1000./header.framesPerSecond);
+    } 
+    else
+    {
+        std::cout << "Chroma image is not from the same frame as the luma image" << std::endl;
     }
 
-    //
-    // Create a container for the image data
-    std::vector<uint8_t> imageData;
-    imageData.resize(header.imageLength);
-
-    //
-    // Copy image data from the header's image data pointer to our
-    // image container
-    memcpy(&(imageData[0]), header.imageDataP, header.imageLength);
-
-    //
-    // Create a OpenCV matrix using our image container
-    cv::Mat_<uint8_t> imageMat(header.height, header.width, &(imageData[0]));
-
-    //
-    // Display the image using OpenCV
-    cv::namedWindow("Example");
-    cv::imshow("Example", imageMat);
-    cv::waitKey(1000./header.framesPerSecond/2);
 }
 
 

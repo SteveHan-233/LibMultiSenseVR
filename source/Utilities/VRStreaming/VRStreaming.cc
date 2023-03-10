@@ -4,6 +4,7 @@ using OpenCV (header.bitsPerPixel = 8)
 
 #include "MultiSense/MultiSenseTypes.hh"
 #include <iostream>
+#include <memory>
 #include <stdexcept>
 #include <signal.h>
 #include <unistd.h>
@@ -13,6 +14,7 @@ using OpenCV (header.bitsPerPixel = 8)
 
 // Note this example has only been tested under Linux
 #include <opencv2/opencv.hpp>
+#include <unordered_map>
 
 volatile bool doneG = false;
 
@@ -108,18 +110,23 @@ class Camera
     public:
         Camera(crl::multisense::Channel* channel);
         ~Camera();
-        void imageCallback(const crl::multisense::image::Header& header);
+        void chromaCallback(const crl::multisense::image::Header& header);
+        void lumaCallback(const crl::multisense::image::Header& header);
 
     private:
         crl::multisense::Channel* m_channel;
+
+        // store images from different callbacks to synchronize luma and rbg, left and right.
+        std::unordered_map<crl::multisense::DataSource, std::shared_ptr<BufferWrapper<crl::multisense::image::Header>>> image_buffers_;
 };
 
 namespace {
-    //
     // Shim for the C-style callbacks accepted by
     // crl::mulisense::Channel::addIsolatedCallback
-    void monoCallback(const crl::multisense::image::Header& header, void* userDataP)
-    { reinterpret_cast<Camera*>(userDataP)->imageCallback(header); }
+    void lumaCB(const crl::multisense::image::Header& header, void* userDataP)
+    { reinterpret_cast<Camera*>(userDataP)->lumaCallback(header); }
+    void chromaCB(const crl::multisense::image::Header& header, void* userDataP)
+    { reinterpret_cast<Camera*>(userDataP)->chromaCallback(header); }
 }
 
 
@@ -132,21 +139,24 @@ Camera::Camera(crl::multisense::Channel* channel):
     // Attach our monoCallback to our Channel instance. It will get
     // called every time there is new Left Luma or Right luma image
     // data.
-    status = m_channel->addIsolatedCallback(monoCallback,
-                                           crl::multisense::Source_Rgb_Left, 
+    status = m_channel->addIsolatedCallback(lumaCB,
+                                           crl::multisense::Source_Luma_Left, 
                                            this);
-
-    //
+    // Check to see if the callback was successfully attached
+    if(crl::multisense::Status_Ok != status) {
+        throw std::runtime_error("Unable to attach isolated callback");
+    }
+    status = m_channel->addIsolatedCallback(chromaCB,
+                                           crl::multisense::Source_Luma_Left, 
+                                           this);
     // Check to see if the callback was successfully attached
     if(crl::multisense::Status_Ok != status) {
         throw std::runtime_error("Unable to attach isolated callback");
     }
 
-    //
     // Start streaming luma images for the left and right cameras.
-    m_channel->startStreams(crl::multisense::Source_Rgb_Left);
+    m_channel->startStreams(crl::multisense::Source_Luma_Left | crl::multisense::Source_Luma_Right);
 
-    //
     // Check to see if the streams were sucessfully started
     if(crl::multisense::Status_Ok != status) {
         throw std::runtime_error("Unable to start image streams");
@@ -157,19 +167,20 @@ Camera::~Camera()
 {
     crl::multisense::Status status;
 
-    //
     // Remove our isolated callback.
-    status = m_channel->removeIsolatedCallback(monoCallback);
-
-    //
+    status = m_channel->removeIsolatedCallback(lumaCB);
     // Check to see if the callback was successfully removed
     if(crl::multisense::Status_Ok != status) {
         std::cout << "Unable to remove isolated callback" << std::endl;
     }
 
-    //
+    status = m_channel->removeIsolatedCallback(chromaCB);
+    if(crl::multisense::Status_Ok != status) {
+        std::cout << "Unable to remove isolated callback" << std::endl;
+    }
+
     // Stop streaming luma images for the left and right cameras
-    m_channel->stopStreams(crl::multisense::Source_Luma_Left | crl::multisense::Source_Luma_Right);
+    m_channel->stopStreams(crl::multisense::Source_Luma_Left | crl::multisense::Source_Chroma_Left);
 
     //
     // Check to see if the image streams were successfully stopped
@@ -178,9 +189,43 @@ Camera::~Camera()
     }
 }
 
-void Camera::imageCallback(const crl::multisense::image::Header& header)
+// Saves the new luma image in the buffer and replaces the previous luma image. 
+// The previous luma image will not be freed until there are no pointers pointing to it.
+void Camera::lumaCallback(const crl::multisense::image::Header& header)
 {
-    std::cout << "hey" << std::endl;
+    if (crl::multisense::Source_Luma_Left != header.source &&
+        crl::multisense::Source_Luma_Right != header.source)
+    {
+        std::cout << "Unexpected source: " << header.source << std::endl;
+        return;
+    }
+
+    image_buffers_[header.source] = std::make_shared<BufferWrapper<crl::multisense::image::Header>>(m_channel, header);
+}
+
+void Camera::chromaCallback(const crl::multisense::image::Header& header)
+{
+    if (crl::multisense::Source_Chroma_Left != header.source &&
+        crl::multisense::Source_Chroma_Right != header.source)
+    {
+        std::cout << "Unexpected source: " << header.source << std::endl;
+        return;
+    }
+
+    const auto left_luma = image_buffers_.find(crl::multisense::Source_Luma_Left);
+    if (left_luma == image_buffers_.end())
+    {
+        std::cout << "No left luma image" << std::endl;
+        return;
+    }
+
+    const auto luma_ptr = left_luma->second;
+
+    if (header.frameId == luma_ptr->data().frameId)
+    {
+
+    }
+
     //
     // Create a container for the image data
     std::vector<uint8_t> imageData;

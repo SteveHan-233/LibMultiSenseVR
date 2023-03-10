@@ -49,3 +49,5 @@ docs/latex/
 
 # Visual Studio cache/options directory
 .vs
+
+.cache

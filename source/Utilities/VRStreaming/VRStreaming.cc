@@ -5,6 +5,7 @@ using OpenCV (header.bitsPerPixel = 8)
 #include "MultiSense/MultiSenseTypes.hh"
 #include <iostream>
 #include <memory>
+#include <opencv2/imgproc.hpp>
 #include <stdexcept>
 #include <signal.h>
 #include <unistd.h>
@@ -135,6 +136,8 @@ Camera::Camera(crl::multisense::Channel* channel):
 {
     crl::multisense::Status status;
 
+    std::cout << "attaching callbacks" <<  std::endl;
+
     //
     // Attach our monoCallback to our Channel instance. It will get
     // called every time there is new Left Luma or Right luma image
@@ -147,15 +150,16 @@ Camera::Camera(crl::multisense::Channel* channel):
         throw std::runtime_error("Unable to attach isolated callback");
     }
     status = m_channel->addIsolatedCallback(chromaCB,
-                                           crl::multisense::Source_Luma_Left, 
+                                           crl::multisense::Source_Chroma_Left, 
                                            this);
     // Check to see if the callback was successfully attached
     if(crl::multisense::Status_Ok != status) {
         throw std::runtime_error("Unable to attach isolated callback");
     }
 
+    std::cout << "starting streams" <<  std::endl;
     // Start streaming luma images for the left and right cameras.
-    m_channel->startStreams(crl::multisense::Source_Luma_Left | crl::multisense::Source_Luma_Right);
+    m_channel->startStreams(crl::multisense::Source_Luma_Left | crl::multisense::Source_Chroma_Left);
 
     // Check to see if the streams were sucessfully started
     if(crl::multisense::Status_Ok != status) {
@@ -193,6 +197,7 @@ Camera::~Camera()
 // The previous luma image will not be freed until there are no pointers pointing to it.
 void Camera::lumaCallback(const crl::multisense::image::Header& header)
 {
+    std::cout << "lumaCallback" << std::endl;
     if (crl::multisense::Source_Luma_Left != header.source &&
         crl::multisense::Source_Luma_Right != header.source)
     {
@@ -208,6 +213,7 @@ void Camera::chromaCallback(const crl::multisense::image::Header& header)
 {
     // The left-luma image is currently published before the matching chroma image so this can just trigger on that
 
+    std::cout << "chromaCallback" << std::endl;
     if (crl::multisense::Source_Chroma_Left != header.source &&
         crl::multisense::Source_Chroma_Right != header.source)
     {
@@ -232,18 +238,19 @@ void Camera::chromaCallback(const crl::multisense::image::Header& header)
         std::cout << "received chroma image with resolution " << width << "x" << height << std::endl;
 
         // Create a container for the image data
-        std::vector<uint8_t> imageData;
-        imageData.resize(header.imageLength);
+        std::vector<uint8_t> imageData(width * height * 3); // for some reason it's different from header.imageLength
 
         // Convert YCbCr 4:2:0 to RGB
         ycbcrToBgr(luma_ptr->data(), header, &imageData[0]);
         // Create a OpenCV matrix using our image container
-        cv::Mat_<uint8_t> imageMat(header.height, header.width, &(imageData[0]));
+        cv::Mat imageMat(header.height, header.width, CV_8UC3, &(imageData[0]));
+        cv::Mat converted;
+        cvtColor(imageMat, converted, cv::COLOR_BGR2RGB);
 
         // Display the image using OpenCV
         cv::namedWindow("Example");
-        cv::imshow("Example", imageMat);
-        cv::waitKey(1000./header.framesPerSecond);
+        cv::imshow("Example", converted);
+        cv::waitKey(1);
     } 
     else
     {

@@ -5,6 +5,7 @@ using OpenCV (header.bitsPerPixel = 8)
 #include "MultiSense/MultiSenseTypes.hh"
 #include <iostream>
 #include <memory>
+#include <opencv2/highgui.hpp>
 #include <opencv2/imgproc.hpp>
 #include <stdexcept>
 #include <signal.h>
@@ -143,14 +144,14 @@ Camera::Camera(crl::multisense::Channel* channel):
     // called every time there is new Left Luma or Right luma image
     // data.
     status = m_channel->addIsolatedCallback(lumaCB,
-                                           crl::multisense::Source_Luma_Left, 
+                                           crl::multisense::Source_Luma_Left | crl::multisense::Source_Luma_Right, 
                                            this);
     // Check to see if the callback was successfully attached
     if(crl::multisense::Status_Ok != status) {
         throw std::runtime_error("Unable to attach isolated callback");
     }
     status = m_channel->addIsolatedCallback(chromaCB,
-                                           crl::multisense::Source_Chroma_Left, 
+                                           crl::multisense::Source_Chroma_Left | crl::multisense::Source_Chroma_Right, 
                                            this);
     // Check to see if the callback was successfully attached
     if(crl::multisense::Status_Ok != status) {
@@ -159,7 +160,7 @@ Camera::Camera(crl::multisense::Channel* channel):
 
     std::cout << "starting streams" <<  std::endl;
     // Start streaming luma images for the left and right cameras.
-    m_channel->startStreams(crl::multisense::Source_Luma_Left | crl::multisense::Source_Chroma_Left);
+    m_channel->startStreams(crl::multisense::Source_Luma_Left | crl::multisense::Source_Chroma_Left | crl::multisense::Source_Luma_Right | crl::multisense::Source_Chroma_Right);
 
     // Check to see if the streams were sucessfully started
     if(crl::multisense::Status_Ok != status) {
@@ -205,6 +206,10 @@ void Camera::lumaCallback(const crl::multisense::image::Header& header)
         return;
     }
 
+    if (header.source == crl::multisense::Source_Luma_Right) {
+        std::cout << "Right Luma" << std::endl;
+    }
+
     image_buffers_[header.source] = std::make_shared<BufferWrapper<crl::multisense::image::Header>>(m_channel, header);
 }
 
@@ -221,35 +226,49 @@ void Camera::chromaCallback(const crl::multisense::image::Header& header)
         return;
     }
 
-    const auto left_luma = image_buffers_.find(crl::multisense::Source_Luma_Left);
-    if (left_luma == image_buffers_.end())
+    if (header.source == crl::multisense::Source_Chroma_Right) {
+        std::cout << "Right Chroma" << std::endl;
+    }
+
+    bool isLeft = header.source == crl::multisense::Source_Chroma_Left;
+    if (!isLeft) {
+        std::cout << "Right image" << std::endl;
+    }
+    const auto luma = image_buffers_.find(isLeft ? crl::multisense::Source_Luma_Left : crl::multisense::Source_Luma_Right);
+    if (luma == image_buffers_.end())
     {
-        std::cout << "No left luma image" << std::endl;
+        std::cout << "No luma image" << std::endl;
         return;
     }
 
-    const auto luma_ptr = left_luma->second;
+    const auto luma_ptr = luma->second;
 
     if (header.frameId == luma_ptr->data().frameId)
     {
         const uint32_t height = luma_ptr->data().height;
         const uint32_t width = luma_ptr->data().width;
-
-        std::cout << "received chroma image with resolution " << width << "x" << height << std::endl;
-
+        std::cout << "luma resolution " << luma_ptr->data().width << "x" <<  luma_ptr->data().height << " and chroma resolution " << header.width << "x" << header.height << std::endl;
+        std::cout << "luma length " << luma_ptr->data().imageLength << " and chroma length " << header.imageLength << std::endl;
+        //std::vector<uint8_t> lumaImage(width * height); // for some reason it's different from header.imageLength
+        //memcpy(&(lumaImage[0]), luma_ptr->data().imageDataP, luma_ptr->data().imageLength);
+        //cv::Mat lumaMat(luma_ptr->data().height, luma_ptr->data().width, CV_8UC1, &(lumaImage[0]));
+        //cv::namedWindow("luma");
+        //cv::imshow("luma", lumaMat);
+        //cv::waitKey(1);
+        
         // Create a container for the image data
         std::vector<uint8_t> imageData(width * height * 3); // for some reason it's different from header.imageLength
 
         // Convert YCbCr 4:2:0 to RGB
         ycbcrToBgr(luma_ptr->data(), header, &imageData[0]);
         // Create a OpenCV matrix using our image container
-        cv::Mat imageMat(header.height, header.width, CV_8UC3, &(imageData[0]));
-        cv::Mat converted;
-        cvtColor(imageMat, converted, cv::COLOR_BGR2RGB);
+        cv::Mat imageMat(height, width, CV_8UC3, &(imageData[0]));
+        //cv::Mat converted;
+        //cvtColor(imageMat, converted, cv::COLOR_BGR2RGB);
 
         // Display the image using OpenCV
-        cv::namedWindow("Example");
-        cv::imshow("Example", converted);
+        cv::namedWindow(isLeft ? "left" : "right");
+        cv::imshow((isLeft ? "left" : "right"), imageMat);
         cv::waitKey(1);
     } 
     else
@@ -270,7 +289,7 @@ int main()
     // Instantiate a channel connecting to a sensor at the factory default
     // IP address
     crl::multisense::Channel* channel;
-    channel = crl::multisense::Channel::Create("10.66.171.21");
+    channel = crl::multisense::Channel::Create("192.168.1.7");
 
     channel->setMtu(7200);
 

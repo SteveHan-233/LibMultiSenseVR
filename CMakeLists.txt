@@ -23,7 +23,7 @@ if(CMAKE_CXX_COMPILER_ID STREQUAL "MSVC")
 
     add_definitions(-D_CRT_SECURE_NO_WARNINGS -D_WINSOCK_DEPRECATED_NO_WARNINGS)
 else()
-    add_compile_options(-Wall -Wextra -Werror -Wpedantic -Wno-variadic-macros)
+    add_compile_options(-Wall -Wextra -Wpedantic -Wno-variadic-macros)
 endif()
 
 if (CMAKE_CXX_COMPILER_ID STREQUAL "Clang")

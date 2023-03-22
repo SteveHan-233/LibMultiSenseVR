@@ -51,3 +51,6 @@ docs/latex/
 .vs
 
 .cache
+images
+
+source/vr-interface

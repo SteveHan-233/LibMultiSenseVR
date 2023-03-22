@@ -9,10 +9,8 @@ using OpenCV (header.bitsPerPixel = 8)
 #include <opencv2/imgproc.hpp>
 #include <stdexcept>
 #include <signal.h>
-#include <string>
 #include <unistd.h>
 #include <eigen3/Eigen/Core>
-#include <chrono>
 
 #include <MultiSense/MultiSenseChannel.hh>
 
@@ -114,6 +112,7 @@ class Camera
     public:
         Camera(crl::multisense::Channel* channel);
         ~Camera();
+        void chromaCallback(const crl::multisense::image::Header& header);
         void lumaCallback(const crl::multisense::image::Header& header);
 
     private:
@@ -128,6 +127,8 @@ namespace {
     // crl::mulisense::Channel::addIsolatedCallback
     void lumaCB(const crl::multisense::image::Header& header, void* userDataP)
     { reinterpret_cast<Camera*>(userDataP)->lumaCallback(header); }
+    void chromaCB(const crl::multisense::image::Header& header, void* userDataP)
+    { reinterpret_cast<Camera*>(userDataP)->chromaCallback(header); }
 }
 
 
@@ -149,10 +150,17 @@ Camera::Camera(crl::multisense::Channel* channel):
     if(crl::multisense::Status_Ok != status) {
         throw std::runtime_error("Unable to attach isolated callback");
     }
+    status = m_channel->addIsolatedCallback(chromaCB,
+                                           crl::multisense::Source_Chroma_Left | crl::multisense::Source_Chroma_Right, 
+                                           this);
+    // Check to see if the callback was successfully attached
+    if(crl::multisense::Status_Ok != status) {
+        throw std::runtime_error("Unable to attach isolated callback");
+    }
 
     std::cout << "starting streams" <<  std::endl;
     // Start streaming luma images for the left and right cameras.
-    m_channel->startStreams(crl::multisense::Source_Luma_Left | crl::multisense::Source_Luma_Right);
+    m_channel->startStreams(crl::multisense::Source_Luma_Left | crl::multisense::Source_Chroma_Left | crl::multisense::Source_Luma_Right | crl::multisense::Source_Chroma_Right);
 
     // Check to see if the streams were sucessfully started
     if(crl::multisense::Status_Ok != status) {
@@ -171,6 +179,11 @@ Camera::~Camera()
         std::cout << "Unable to remove isolated callback" << std::endl;
     }
 
+    status = m_channel->removeIsolatedCallback(chromaCB);
+    if(crl::multisense::Status_Ok != status) {
+        std::cout << "Unable to remove isolated callback" << std::endl;
+    }
+
     // Stop streaming luma images for the left and right cameras
     m_channel->stopStreams(crl::multisense::Source_Luma_Left | crl::multisense::Source_Chroma_Left);
 
@@ -185,7 +198,7 @@ Camera::~Camera()
 // The previous luma image will not be freed until there are no pointers pointing to it.
 void Camera::lumaCallback(const crl::multisense::image::Header& header)
 {
-    //std::cout << "lumaCallback" << std::endl;
+    std::cout << "lumaCallback" << std::endl;
     if (crl::multisense::Source_Luma_Left != header.source &&
         crl::multisense::Source_Luma_Right != header.source)
     {
@@ -193,31 +206,78 @@ void Camera::lumaCallback(const crl::multisense::image::Header& header)
         return;
     }
 
-    image_buffers_[header.source] = std::make_shared<BufferWrapper<crl::multisense::image::Header>>(m_channel, header);
+    if (header.source == crl::multisense::Source_Luma_Right) {
+        std::cout << "Right Luma" << std::endl;
+    }
 
-    bool isLeft = header.source == crl::multisense::Source_Luma_Left;
-    const auto luma = image_buffers_.find(isLeft ? crl::multisense::Source_Luma_Right : crl::multisense::Source_Luma_Left);
+    image_buffers_[header.source] = std::make_shared<BufferWrapper<crl::multisense::image::Header>>(m_channel, header);
+}
+
+// Finds the corresponding Luma image and if it is the same frame, converts the chroma image to BGR and displays it.
+void Camera::chromaCallback(const crl::multisense::image::Header& header)
+{
+    // The left-luma image is currently published before the matching chroma image so this can just trigger on that
+
+    std::cout << "chromaCallback" << std::endl;
+    if (crl::multisense::Source_Chroma_Left != header.source &&
+        crl::multisense::Source_Chroma_Right != header.source)
+    {
+        std::cout << "Unexpected source: " << header.source << std::endl;
+        return;
+    }
+
+    if (header.source == crl::multisense::Source_Chroma_Right) {
+        std::cout << "Right Chroma" << std::endl;
+    }
+
+    bool isLeft = header.source == crl::multisense::Source_Chroma_Left;
+    if (!isLeft) {
+        std::cout << "Right image" << std::endl;
+    }
+    const auto luma = image_buffers_.find(isLeft ? crl::multisense::Source_Luma_Left : crl::multisense::Source_Luma_Right);
     if (luma == image_buffers_.end())
     {
         std::cout << "No luma image" << std::endl;
         return;
     }
+
     const auto luma_ptr = luma->second;
+
     if (header.frameId == luma_ptr->data().frameId)
     {
-        cv::Mat thisIm(header.height, header.width, CV_8UC1, (void*)header.imageDataP);
-        cv::Mat otherIm(header.height, header.width, CV_8UC1, (void*)luma_ptr->data().imageDataP);
-        cv::Mat combined;
-        cv::hconcat(thisIm, otherIm, combined);
-        cv::namedWindow("luma");
-        cv::imshow("luma", combined);
-        cv::Mat smaller;
-        cv::resize(combined, smaller, cv::Size(800, 200));
-        cv::imwrite("../images/" + std::to_string(std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch()).count()) + ".png", smaller);
+        const uint32_t height = luma_ptr->data().height;
+        const uint32_t width = luma_ptr->data().width;
+        std::cout << "luma resolution " << luma_ptr->data().width << "x" <<  luma_ptr->data().height << " and chroma resolution " << header.width << "x" << header.height << std::endl;
+        std::cout << "luma length " << luma_ptr->data().imageLength << " and chroma length " << header.imageLength << std::endl;
+        //std::vector<uint8_t> lumaImage(width * height); // for some reason it's different from header.imageLength
+        //memcpy(&(lumaImage[0]), luma_ptr->data().imageDataP, luma_ptr->data().imageLength);
+        //cv::Mat lumaMat(luma_ptr->data().height, luma_ptr->data().width, CV_8UC1, &(lumaImage[0]));
+        //cv::namedWindow("luma");
+        //cv::imshow("luma", lumaMat);
+        //cv::waitKey(1);
+        
+        // Create a container for the image data
+        std::vector<uint8_t> imageData(width * height * 3); // for some reason it's different from header.imageLength
+
+        // Convert YCbCr 4:2:0 to RGB
+        ycbcrToBgr(luma_ptr->data(), header, &imageData[0]);
+        // Create a OpenCV matrix using our image container
+        cv::Mat imageMat(height, width, CV_8UC3, &(imageData[0]));
+        //cv::Mat converted;
+        //cvtColor(imageMat, converted, cv::COLOR_BGR2RGB);
+
+        // Display the image using OpenCV
+        cv::namedWindow(isLeft ? "left" : "right");
+        cv::imshow((isLeft ? "left" : "right"), imageMat);
         cv::waitKey(1);
+    } 
+    else
+    {
+        std::cout << "Chroma image is not from the same frame as the luma image" << std::endl;
     }
 
 }
+
 
 int main()
 {
@@ -231,7 +291,7 @@ int main()
     crl::multisense::Channel* channel;
     channel = crl::multisense::Channel::Create("192.168.1.7");
 
-    channel->setMtu(1500);
+    channel->setMtu(7200);
 
     try
     {

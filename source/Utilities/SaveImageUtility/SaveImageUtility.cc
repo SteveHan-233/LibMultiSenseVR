@@ -336,7 +336,7 @@ int main(int    argc,
          char **argvPP)
 {
     std::string currentAddress = "10.66.171.21";
-    int32_t mtu = 7200;
+    int32_t mtu = 1500;
     RemoteHeadChannel head_id = Remote_Head_VPB;
 
 #if WIN32

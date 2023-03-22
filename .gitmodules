@@ -1,0 +1,3 @@
+[submodule "source/vr-interface"]
+	path = source/vr-interface
+	url = https://github.com/UT-Austin-RPL/vr-interface.git

@@ -126,7 +126,7 @@ endif()
 # Add in all of the source files in this directory.
 #
 
-add_library(MultiSense ${MULTISENSE_HEADERS}
+add_library(MultiSense STATIC ${MULTISENSE_HEADERS}
                        ${DETAILS_HEADERS}
                        ${DETAILS_SRC})
 

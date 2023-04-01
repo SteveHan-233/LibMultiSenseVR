@@ -5,6 +5,6 @@ link_directories(${Eigen_INCLUDE_DIRS})
 
 add_executable(VRStreaming VRStreaming.cc)
 
-target_link_libraries (VRStreaming ${MULTISENSE_UTILITY_LIBS} ${OpenCV_LIBS} ${Eigen_LIBRARIES})
+target_link_libraries (VRStreaming ${MULTISENSE_UTILITY_LIBS} ${OpenCV_LIBS} ${Eigen_LIBRARIES} zmq)
 
 install(TARGETS VRStreaming RUNTIME DESTINATION "bin")

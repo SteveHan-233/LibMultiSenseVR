@@ -120,7 +120,6 @@ class Camera
         Camera(crl::multisense::Channel* channel);
         ~Camera();
         void lumaCallback(const crl::multisense::image::Header& header);
-        void chromaCallback(const crl::multisense::image::Header& header);
 
     private:
         crl::multisense::Channel* m_channel;
@@ -134,8 +133,6 @@ namespace {
     // crl::mulisense::Channel::addIsolatedCallback
     void lumaCB(const crl::multisense::image::Header& header, void* userDataP)
     { reinterpret_cast<Camera*>(userDataP)->lumaCallback(header); }
-    void chromaCB(const crl::multisense::image::Header& header, void* userDataP)
-    { reinterpret_cast<Camera*>(userDataP)->chromaCallback(header); }
 }
 
 
@@ -157,17 +154,10 @@ Camera::Camera(crl::multisense::Channel* channel):
     if(crl::multisense::Status_Ok != status) {
         throw std::runtime_error("Unable to attach isolated callback");
     }
-    status = m_channel->addIsolatedCallback(chromaCB,
-                                           crl::multisense::Source_Chroma_Left | crl::multisense::Source_Chroma_Right, 
-                                           this);
-    // Check to see if the callback was successfully attached
-    if(crl::multisense::Status_Ok != status) {
-        throw std::runtime_error("Unable to attach isolated callback");
-    }
 
     std::cout << "starting streams" <<  std::endl;
     // Start streaming luma images for the left and right cameras.
-    m_channel->startStreams(crl::multisense::Source_Luma_Left | crl::multisense::Source_Chroma_Left | crl::multisense::Source_Luma_Right | crl::multisense::Source_Chroma_Right);
+    m_channel->startStreams(crl::multisense::Source_Luma_Left | crl::multisense::Source_Luma_Right);
 
     // Check to see if the streams were sucessfully started
     if(crl::multisense::Status_Ok != status) {
@@ -186,13 +176,8 @@ Camera::~Camera()
         std::cout << "Unable to remove isolated callback" << std::endl;
     }
 
-    status = m_channel->removeIsolatedCallback(chromaCB);
-    if(crl::multisense::Status_Ok != status) {
-        std::cout << "Unable to remove isolated callback" << std::endl;
-    }
-
     // Stop streaming luma images for the left and right cameras
-    m_channel->stopStreams(crl::multisense::Source_Luma_Left | crl::multisense::Source_Chroma_Left | crl::multisense::Source_Luma_Right | crl::multisense::Source_Chroma_Right);
+    m_channel->stopStreams(crl::multisense::Source_Luma_Left | crl::multisense::Source_Chroma_Left);
 
     //
     // Check to see if the image streams were successfully stopped
@@ -225,88 +210,22 @@ void Camera::lumaCallback(const crl::multisense::image::Header& header)
     const auto luma_ptr = luma->second;
     if (header.frameId == luma_ptr->data().frameId)
     {
-        //auto start = std::chrono::high_resolution_clock::now();
+        auto start = std::chrono::high_resolution_clock::now();
         cv::Mat thisIm(header.height, header.width, CV_8UC1, (void*)header.imageDataP);
         cv::Mat otherIm(header.height, header.width, CV_8UC1, (void*)luma_ptr->data().imageDataP);
         cv::Mat combined;
         cv::hconcat(thisIm, otherIm, combined);
+        cv::namedWindow("luma");
+        cv::imshow("luma", combined);
         cv::Mat smaller;
         cv::resize(combined, smaller, cv::Size(800, 200));
-
-        //auto start_zmq = std::chrono::high_resolution_clock::now();
-
-        std::vector<uchar> buf;
-        cv::imencode(".png", smaller, buf);
-        std::cout << "Image size is " << smaller.total() * smaller.elemSize() << std::endl;
-        std::cout << "Compressed Image size is " << buf.size() << std::endl;
-        // send the combined image using zmq
-        zmq::message_t msg(buf.data(), buf.size());
-        stereo_streaming_socket.send(msg, zmq::send_flags::dontwait);
-
-        //auto end = std::chrono::high_resolution_clock::now();
-        //auto img_duration = std::chrono::duration_cast<std::chrono::milliseconds>(start_zmq - start);
-        //auto zmq_duration = std::chrono::duration_cast<std::chrono::milliseconds>(end - start_zmq);
-
-        //std::cout << "Time taken by image processing: " << img_duration.count() << " ms, time taken by zmq is " << zmq_duration.count() << " ms." << std::endl;
-        //cv::namedWindow("luma");
-        //cv::imshow("luma", combined);
-        //cv::imwrite("../images/" + std::to_string(std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch()).count()) + ".png", smaller);
-        //cv::waitKey(1);
-    }
-
-}
-
-// Finds the corresponding Luma image and if it is the same frame, converts the chroma image to BGR and displays it.
-void Camera::chromaCallback(const crl::multisense::image::Header& header)
-{
-    // The left-luma image is currently published before the matching chroma image so this can just trigger on that
-
-    if (crl::multisense::Source_Chroma_Left != header.source &&
-        crl::multisense::Source_Chroma_Right != header.source)
-    {
-        std::cout << "Unexpected source: " << header.source << std::endl;
-        return;
-    }
-
-    // always left since right chroma doens't exist for some reason
-    bool isLeft = header.source == crl::multisense::Source_Chroma_Left;
-    const auto luma = image_buffers_.find(isLeft ? crl::multisense::Source_Luma_Left : crl::multisense::Source_Luma_Right);
-    if (luma == image_buffers_.end())
-    {
-        std::cout << "No luma image" << std::endl;
-        return;
-    }
-
-    const auto luma_ptr = luma->second;
-
-    if (header.frameId == luma_ptr->data().frameId)
-    {
-        const uint32_t height = luma_ptr->data().height;
-        const uint32_t width = luma_ptr->data().width;
-        // Create a container for the image data
-        std::vector<uint8_t> imageData(width * height * 3); // for some reason it's different from header.imageLength
-
-        // Convert YCbCr 4:2:0 to RGB
-        ycbcrToBgr(luma_ptr->data(), header, &imageData[0]);
-        // Create a OpenCV matrix using our image container
-        cv::Mat imageMat(height, width, CV_8UC3, &(imageData[0]));
-        cv::Mat smaller;
-        cv::resize(imageMat, smaller, cv::Size(400, 200));
-        // encode the image losslessly
-        std::vector<uchar> buf;
-        cv::imencode(".png", smaller, buf);
-        std::cout << "Image size is " << smaller.total() * smaller.elemSize() << std::endl;
-        std::cout << "Compressed Image size is " << buf.size() << std::endl;
-        // send the encoded image using zmq
-        zmq::message_t msg(buf.data(), buf.size());
-        rgb_streaming_socket.send(msg, zmq::send_flags::dontwait);
-        cv::namedWindow(isLeft ? "left" : "right");
-        cv::imshow((isLeft ? "left" : "right"), imageMat);
+        cv::imwrite("../images/" + std::to_string(std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch()).count()) + ".png", smaller);
+        auto start_wait = std::chrono::high_resolution_clock::now();
         cv::waitKey(1);
-    } 
-    else
-    {
-        std::cout << "Chroma image is not from the same frame as the luma image" << std::endl;
+        auto end_wait = std::chrono::high_resolution_clock::now();
+        auto img_duration = std::chrono::duration_cast<std::chrono::milliseconds>(start_wait - start);
+        auto wait_duration = std::chrono::duration_cast<std::chrono::milliseconds>(end_wait - start_wait);
+    std::cout << "Time taken by image processing: " << img_duration.count() << " ms, time taken by waiting is " << wait_duration.count() << " ms." << std::endl;
     }
 
 }
@@ -330,10 +249,6 @@ int main()
     channel = crl::multisense::Channel::Create("192.168.1.7");
 
     channel->setMtu(1500);
-    crl::multisense::image::Config cfg;
-    channel->getImageConfig(cfg);
-    cfg.setFps(20);
-    channel->setImageConfig(cfg);
 
     try
     {
@@ -352,5 +267,4 @@ int main()
     // Destroy the channel instance
     crl::multisense::Channel::Destroy(channel);
 }
-
 

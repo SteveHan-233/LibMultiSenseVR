@@ -235,12 +235,8 @@ void Camera::lumaCallback(const crl::multisense::image::Header& header)
 
         //auto start_zmq = std::chrono::high_resolution_clock::now();
 
-        std::vector<uchar> buf;
-        cv::imencode(".png", smaller, buf);
-        std::cout << "Image size is " << smaller.total() * smaller.elemSize() << std::endl;
-        std::cout << "Compressed Image size is " << buf.size() << std::endl;
         // send the combined image using zmq
-        zmq::message_t msg(buf.data(), buf.size());
+        zmq::message_t msg(smaller.data, smaller.total() * smaller.elemSize());
         stereo_streaming_socket.send(msg, zmq::send_flags::dontwait);
 
         //auto end = std::chrono::high_resolution_clock::now();
@@ -292,13 +288,7 @@ void Camera::chromaCallback(const crl::multisense::image::Header& header)
         cv::Mat imageMat(height, width, CV_8UC3, &(imageData[0]));
         cv::Mat smaller;
         cv::resize(imageMat, smaller, cv::Size(400, 200));
-        // encode the image losslessly
-        std::vector<uchar> buf;
-        cv::imencode(".png", smaller, buf);
-        std::cout << "Image size is " << smaller.total() * smaller.elemSize() << std::endl;
-        std::cout << "Compressed Image size is " << buf.size() << std::endl;
-        // send the encoded image using zmq
-        zmq::message_t msg(buf.data(), buf.size());
+        zmq::message_t msg(smaller.data, smaller.total() * smaller.elemSize());
         rgb_streaming_socket.send(msg, zmq::send_flags::dontwait);
         cv::namedWindow(isLeft ? "left" : "right");
         cv::imshow((isLeft ? "left" : "right"), imageMat);
